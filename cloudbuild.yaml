@@ -1,21 +1,32 @@
 steps:
+  # Step 0: Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/ep-simulation:latest'
+      - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:latest'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/ep-simulation:$SHORT_SHA'
+      - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:$SHORT_SHA'
       - '.'
 
+  # Step 1: Push the image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/ep-simulation:latest'
+      - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:latest'
+
+  # Step 2: Push the SHA-tagged image too
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:$SHORT_SHA'
 
 images:
-  - 'gcr.io/$PROJECT_ID/ep-simulation:latest'
-  - 'gcr.io/$PROJECT_ID/ep-simulation:$SHORT_SHA'
+  - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:latest'
+  - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:$SHORT_SHA'
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+
+  
