@@ -4,29 +4,26 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:latest'
+      - 'asia-south2-docker.pkg.dev/energyplus-simulation/docker/ep-simulation:latest'
       - '-t'
-      - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:$SHORT_SHA'
+      - 'asia-south2-docker.pkg.dev/energyplus-simulation/docker/ep-simulation:$SHORT_SHA'
       - '.'
 
-  # Step 1: Push the image to Artifact Registry
+  # Step 1: Push the latest tag
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:latest'
+      - 'asia-south2-docker.pkg.dev/energyplus-simulation/docker/ep-simulation:latest'
 
-  # Step 2: Push the SHA-tagged image too
+  # Step 2: Push the SHA tag
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:$SHORT_SHA'
+      - 'asia-south2-docker.pkg.dev/energyplus-simulation/docker/ep-simulation:$SHORT_SHA'
 
 images:
-  - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:latest'
-  - 'asia-south2-docker.pkg.dev/$PROJECT_ID/ep-simulation/ep-simulation:$SHORT_SHA'
+  - 'asia-south2-docker.pkg.dev/energyplus-simulation/docker/ep-simulation:latest'
+  - 'asia-south2-docker.pkg.dev/energyplus-simulation/docker/ep-simulation:$SHORT_SHA'
 
 options:
   logging: CLOUD_LOGGING_ONLY
-
-
-  
