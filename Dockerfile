@@ -31,7 +31,8 @@ ENV ENERGYPLUS_VERSION=22.1.0 \
 RUN wget -q "https://github.com/NatLabRockies/EnergyPlus/releases/download/v22.1.0/EnergyPlus-22.1.0-ed759b17ee-Linux-Ubuntu20.04-x86_64.sh" \
         -O /tmp/ep_installer.sh \
     && chmod +x /tmp/ep_installer.sh \
-    && echo "y\n" | /tmp/ep_installer.sh \
+    # Fixed
+    && printf 'y\n' | /tmp/ep_installer.sh \
     && rm /tmp/ep_installer.sh
 
 # --- Set Up App ---
