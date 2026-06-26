@@ -366,6 +366,12 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
+        # ── TEMPORARY DEBUG — remove after fixing ──
+    if "gcp_service_account" in st.secrets:
+        st.success("✓ Secrets found")
+    else:
+        st.error("✗ Secret 'gcp_service_account' NOT found — check your secrets format")
+
     col_idf, col_epw = st.columns(2)
 
     with col_idf:
