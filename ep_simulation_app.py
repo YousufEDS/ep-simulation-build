@@ -4,10 +4,12 @@ import time
 import tempfile
 import os
 from google.cloud import storage, run_v2
+from google.oauth2 import service_account
 from google.api_core.exceptions import GoogleAPICallError
+import google.auth
 
 # ─────────────────────────────────────────────────────────────
-# CONFIG — edit these to match your GCP setup
+# CONFIG
 # ─────────────────────────────────────────────────────────────
 GCP_PROJECT      = "energyplus-simulation"
 GCP_REGION       = "asia-south2"
@@ -41,8 +43,6 @@ html, body, [class*="css"] {
     background-color: #0f1117;
     color: #e0e0e0;
 }
-
-/* Header */
 .header-bar {
     display: flex;
     align-items: baseline;
@@ -64,8 +64,6 @@ html, body, [class*="css"] {
     letter-spacing: 0.05em;
     text-transform: uppercase;
 }
-
-/* Upload cards */
 .upload-label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.75rem;
@@ -80,8 +78,6 @@ html, body, [class*="css"] {
     color: #6b7280;
     margin-top: 4px;
 }
-
-/* Status pill */
 .status-pill {
     display: inline-block;
     padding: 3px 12px;
@@ -94,8 +90,6 @@ html, body, [class*="css"] {
 .status-running { background: #1c3557; color: #7dd3fc; border: 1px solid #2563eb; }
 .status-success { background: #14291e; color: #4ade80; border: 1px solid #16a34a; }
 .status-error   { background: #2d1515; color: #f87171; border: 1px solid #dc2626; }
-
-/* Result cards */
 .metric-card {
     background: #161b27;
     border: 1px solid #2a2a3a;
@@ -121,8 +115,6 @@ html, body, [class*="css"] {
     color: #6b7280;
     margin-left: 4px;
 }
-
-/* End use bar chart */
 .enduse-row {
     display: flex;
     align-items: center;
@@ -155,8 +147,6 @@ html, body, [class*="css"] {
     text-align: right;
     flex-shrink: 0;
 }
-
-/* Section header */
 .section-header {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.72rem;
@@ -168,8 +158,6 @@ html, body, [class*="css"] {
     border-bottom: 1px solid #1e2433;
     padding-bottom: 6px;
 }
-
-/* Download button */
 .stDownloadButton > button {
     background: #1d4ed8 !important;
     color: white !important;
@@ -181,11 +169,7 @@ html, body, [class*="css"] {
     width: 100% !important;
     letter-spacing: 0.03em !important;
 }
-.stDownloadButton > button:hover {
-    background: #1e40af !important;
-}
-
-/* Run button */
+.stDownloadButton > button:hover { background: #1e40af !important; }
 .stButton > button {
     background: #059669 !important;
     color: white !important;
@@ -198,14 +182,8 @@ html, body, [class*="css"] {
     font-weight: 600 !important;
     letter-spacing: 0.03em !important;
 }
-.stButton > button:hover {
-    background: #047857 !important;
-}
-
-/* Divider */
+.stButton > button:hover { background: #047857 !important; }
 hr { border-color: #1e2433 !important; }
-
-/* Hide default streamlit chrome */
 #MainMenu { visibility: hidden; }
 footer    { visibility: hidden; }
 header    { visibility: hidden; }
@@ -214,31 +192,52 @@ header    { visibility: hidden; }
 
 
 # ─────────────────────────────────────────────────────────────
+# CREDENTIALS
+# Works on Streamlit Cloud (uses st.secrets) AND locally
+# (uses gcloud auth application-default login)
+# ─────────────────────────────────────────────────────────────
+
+def get_credentials():
+    try:
+        # ── Streamlit Cloud: load from st.secrets ──
+        sa_info = dict(st.secrets["gcp_service_account"])
+        # Fix newline encoding that TOML sometimes mangles
+        sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n")
+        # Remove universe_domain — not accepted by from_service_account_info
+        sa_info.pop("universe_domain", None)
+        return service_account.Credentials.from_service_account_info(
+            sa_info,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+    except (KeyError, FileNotFoundError):
+        # ── Local dev: use gcloud auth application-default login ──
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        return credentials
+
+
+# ─────────────────────────────────────────────────────────────
 # GCS HELPERS
 # ─────────────────────────────────────────────────────────────
 
+def get_gcs_client():
+    return storage.Client(project=GCP_PROJECT, credentials=get_credentials())
+
 def upload_file_to_gcs(local_path, blob_name):
-    client = storage.Client(project=GCP_PROJECT)
-    bucket = client.bucket(BUCKET_NAME)
-    blob = bucket.blob(blob_name)
-    blob.upload_from_filename(local_path)
+    get_gcs_client().bucket(BUCKET_NAME).blob(blob_name).upload_from_filename(local_path)
 
 def download_blob_bytes(blob_name):
-    client = storage.Client(project=GCP_PROJECT)
-    bucket = client.bucket(BUCKET_NAME)
-    blob = bucket.blob(blob_name)
-    return blob.download_as_bytes()
+    return get_gcs_client().bucket(BUCKET_NAME).blob(blob_name).download_as_bytes()
 
 def blob_exists(blob_name):
-    client = storage.Client(project=GCP_PROJECT)
-    bucket = client.bucket(BUCKET_NAME)
-    return bucket.blob(blob_name).exists()
+    return get_gcs_client().bucket(BUCKET_NAME).blob(blob_name).exists()
 
-def delete_blob_if_exists(blob_name):
-    client = storage.Client(project=GCP_PROJECT)
-    bucket = client.bucket(BUCKET_NAME)
-    blob = bucket.blob(blob_name)
-    if blob.exists():
+def cleanup_old_outputs():
+    """Deletes ALL files under outputs/ in GCS before a new run."""
+    bucket = get_gcs_client().bucket(BUCKET_NAME)
+    blobs  = list(bucket.list_blobs(prefix="outputs/"))
+    for blob in blobs:
         blob.delete()
 
 
@@ -247,8 +246,7 @@ def delete_blob_if_exists(blob_name):
 # ─────────────────────────────────────────────────────────────
 
 def trigger_cloud_run_job(idf_blob, epw_blob):
-    """Triggers the Cloud Run Job and returns the execution name."""
-    client = run_v2.JobsClient()
+    client   = run_v2.JobsClient(credentials=get_credentials())
     job_name = f"projects/{GCP_PROJECT}/locations/{GCP_REGION}/jobs/{CLOUD_RUN_JOB}"
 
     request = run_v2.RunJobRequest(
@@ -267,16 +265,10 @@ def trigger_cloud_run_job(idf_blob, epw_blob):
     )
 
     operation = client.run_job(request=request)
-    # operation.metadata contains the execution info
-    meta = operation.metadata
-    return operation, meta.name if meta else None
+    return operation
 
 
-def poll_execution_status(operation, timeout=600, poll_interval=10):
-    """
-    Polls until the Cloud Run Job execution finishes.
-    Returns (success: bool, message: str)
-    """
+def poll_execution_status(operation, timeout=600, poll_interval=8):
     elapsed = 0
     while not operation.done():
         time.sleep(poll_interval)
@@ -285,7 +277,6 @@ def poll_execution_status(operation, timeout=600, poll_interval=10):
         if elapsed >= timeout:
             yield elapsed, "TIMEOUT"
             return
-
     if operation.exception():
         yield elapsed, f"ERROR: {operation.exception()}"
     else:
@@ -299,7 +290,6 @@ def poll_execution_status(operation, timeout=600, poll_interval=10):
 def render_results(results: dict, htm_bytes: bytes):
     st.markdown('<div class="section-header">Simulation Results</div>', unsafe_allow_html=True)
 
-    # ── Top metrics row ──────────────────────────────────────
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -319,7 +309,7 @@ def render_results(results: dict, htm_bytes: bytes):
         </div>""", unsafe_allow_html=True)
 
     with col3:
-        peak = results.get("peak_electricity_demand_W")
+        peak    = results.get("peak_electricity_demand_W")
         peak_kw = peak / 1000 if peak else None
         st.markdown(f"""
         <div class="metric-card">
@@ -327,11 +317,10 @@ def render_results(results: dict, htm_bytes: bytes):
             <div class="metric-value">{f"{peak_kw:.1f}" if peak_kw else "—"}<span class="metric-unit">kW</span></div>
         </div>""", unsafe_allow_html=True)
 
-    # ── End Use Distribution ─────────────────────────────────
     end_uses = results.get("end_use_electricity_GJ", {})
     if end_uses:
         st.markdown('<div class="section-header">End Use Distribution — Electricity (GJ)</div>', unsafe_allow_html=True)
-        total = sum(end_uses.values()) or 1
+        total     = sum(end_uses.values()) or 1
         bars_html = ""
         for eu, val in sorted(end_uses.items(), key=lambda x: -x[1]):
             if val > 0:
@@ -346,7 +335,6 @@ def render_results(results: dict, htm_bytes: bytes):
                 </div>"""
         st.markdown(bars_html, unsafe_allow_html=True)
 
-    # ── Download buttons ─────────────────────────────────────
     st.markdown('<div class="section-header">Download</div>', unsafe_allow_html=True)
     dl_col1, dl_col2 = st.columns(2)
 
@@ -357,7 +345,6 @@ def render_results(results: dict, htm_bytes: bytes):
             file_name="eplusout.htm",
             mime="text/html",
         )
-
     with dl_col2:
         st.download_button(
             label="⬇  Download Results JSON",
@@ -372,7 +359,6 @@ def render_results(results: dict, htm_bytes: bytes):
 # ─────────────────────────────────────────────────────────────
 
 def main():
-    # Header
     st.markdown("""
     <div class="header-bar">
         <span class="header-title">⚡ EnergyPlus Simulation</span>
@@ -380,7 +366,6 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── File upload section ──────────────────────────────────
     col_idf, col_epw = st.columns(2)
 
     with col_idf:
@@ -405,21 +390,15 @@ def main():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Run button ───────────────────────────────────────────
     both_uploaded = idf_file is not None and epw_file is not None
 
     if not both_uploaded:
         st.info("Upload both an IDF and an EPW file to run the simulation.", icon="ℹ️")
 
-    run_clicked = st.button(
-        "▶  Run Simulation",
-        disabled=not both_uploaded,
-    )
+    run_clicked = st.button("▶  Run Simulation", disabled=not both_uploaded)
 
-    # ── Simulation flow ──────────────────────────────────────
     if run_clicked and both_uploaded:
-
-        status_box = st.empty()
+        status_box   = st.empty()
         progress_bar = st.progress(0)
 
         try:
@@ -430,7 +409,7 @@ def main():
                 tmp_idf_path = tmp.name
             upload_file_to_gcs(tmp_idf_path, INPUT_IDF_BLOB)
             os.unlink(tmp_idf_path)
-            progress_bar.progress(15)
+            progress_bar.progress(10)
 
             # Step 2: Upload EPW
             status_box.markdown('<span class="status-pill status-running">Uploading EPW to GCS...</span>', unsafe_allow_html=True)
@@ -439,17 +418,16 @@ def main():
                 tmp_epw_path = tmp.name
             upload_file_to_gcs(tmp_epw_path, INPUT_EPW_BLOB)
             os.unlink(tmp_epw_path)
-            progress_bar.progress(25)
+            progress_bar.progress(20)
 
-            # Step 3: Clear old outputs
+            # Step 3: Clean ALL previous outputs
             status_box.markdown('<span class="status-pill status-running">Clearing previous outputs...</span>', unsafe_allow_html=True)
-            delete_blob_if_exists(OUTPUT_HTM_BLOB)
-            delete_blob_if_exists(OUTPUT_JSON_BLOB)
-            progress_bar.progress(30)
+            cleanup_old_outputs()
+            progress_bar.progress(28)
 
             # Step 4: Trigger Cloud Run Job
             status_box.markdown('<span class="status-pill status-running">Triggering Cloud Run Job...</span>', unsafe_allow_html=True)
-            operation, exec_name = trigger_cloud_run_job(INPUT_IDF_BLOB, INPUT_EPW_BLOB)
+            operation = trigger_cloud_run_job(INPUT_IDF_BLOB, INPUT_EPW_BLOB)
             progress_bar.progress(35)
 
             # Step 5: Poll until done
@@ -477,7 +455,7 @@ def main():
 
             progress_bar.progress(92)
 
-            # Step 6: Download results from GCS
+            # Step 6: Fetch results
             status_box.markdown('<span class="status-pill status-running">Fetching results...</span>', unsafe_allow_html=True)
 
             if not blob_exists(OUTPUT_HTM_BLOB):
@@ -490,7 +468,7 @@ def main():
             results = {}
             if blob_exists(OUTPUT_JSON_BLOB):
                 json_bytes = download_blob_bytes(OUTPUT_JSON_BLOB)
-                results = json.loads(json_bytes.decode("utf-8"))
+                results    = json.loads(json_bytes.decode("utf-8"))
 
             progress_bar.progress(100)
             status_box.markdown(
@@ -498,36 +476,25 @@ def main():
                 unsafe_allow_html=True
             )
 
-            # Step 7: Render results
             render_results(results, htm_bytes)
 
         except GoogleAPICallError as e:
-            status_box.markdown(
-                '<span class="status-pill status-error">GCP API Error</span>',
-                unsafe_allow_html=True
-            )
+            status_box.markdown('<span class="status-pill status-error">GCP API Error</span>', unsafe_allow_html=True)
             st.error(f"Google Cloud API error: {str(e)}")
         except Exception as e:
-            status_box.markdown(
-                '<span class="status-pill status-error">Unexpected Error</span>',
-                unsafe_allow_html=True
-            )
+            status_box.markdown('<span class="status-pill status-error">Unexpected Error</span>', unsafe_allow_html=True)
             st.error(f"Error: {str(e)}")
 
-    # ── Previous results (if outputs already exist in bucket) ─
     elif not run_clicked:
         try:
             if blob_exists(OUTPUT_HTM_BLOB) and blob_exists(OUTPUT_JSON_BLOB):
-                st.markdown(
-                    '<div class="section-header">Previous Run Results</div>',
-                    unsafe_allow_html=True
-                )
-                htm_bytes = download_blob_bytes(OUTPUT_HTM_BLOB)
+                st.markdown('<div class="section-header">Previous Run Results</div>', unsafe_allow_html=True)
+                htm_bytes  = download_blob_bytes(OUTPUT_HTM_BLOB)
                 json_bytes = download_blob_bytes(OUTPUT_JSON_BLOB)
-                results = json.loads(json_bytes.decode("utf-8"))
+                results    = json.loads(json_bytes.decode("utf-8"))
                 render_results(results, htm_bytes)
         except Exception:
-            pass  # No previous results or auth not set up yet — silent
+            pass
 
 
 if __name__ == "__main__":
